@@ -8,9 +8,7 @@ scoping.
 
 ## Overview
 
-Revenant takes a forensic scenario, starting with Digital Corpora: a disk image, often with a memory dump and packet captures alongside. It boots the disk back to life as a Proxmox VM, wrapped as a Ludus source so it deploys like anything else in your range. It recovers the users and creds on the way in, and when the scenario ships pcaps it replays them into the range. You get a live host and its original network traffic, instead of a dead file to read.
-
-Dead-box forensics is the analysis of a system that's powered off and inert. Revenant reverses that. A revenant comes back from the dead; so does your image.
+Revenant takes a forensic scenario, starting with [Digital Corpora](https://digitalcorpora.org): a disk image, often with a memory dump and packet captures alongside. It boots the disk back to life as a Proxmox VM, wrapped as a Ludus source so it deploys like anything else in your range. It recovers the users and creds on the way in, and when the scenario ships pcaps it replays them into the range. You get a live host and its original network traffic, instead of a dead file to read.
 
 ## Why Proxmox and Ludus
 
@@ -29,7 +27,7 @@ The three-part bundle maps onto the pipeline: the disk gets resurrected, the mem
 
 ## Repository layout
 
-Revenant is packaged as a Ludus **source**: a catalog of blueprints, Packer templates, and Ansible roles and collections that `ludus source add` installs. Layout follows the Ludus source template.
+Revenant is packaged as a Ludus **source**: a catalog of blueprints, Packer templates, and Ansible roles and collections that `ludus source add` installs. Layout follows the [Ludus source template](https://gitlab.com/badsectorlabs/ludus-source-template).
 
 ```
 revenant/                         Ludus source root
@@ -104,6 +102,12 @@ Networking, VLANs, and access stay with Ludus.
 - Packer + Ansible for Ludus templates and provisioning
 - [Ludus](https://docs.ludus.cloud/) for source packaging, blueprints, and deployment
 - [Digital Corpora](https://digitalcorpora.org) for source scenarios, pulled with the AWS CLI
+
+## Design notes
+
+**Replay onto a sensor VLAN, not the host.** The default replay path pushes traffic onto the range VLAN, where a sensor VM (Zeek, Suricata, Security Onion, Elastic Agent) ingests it, so any pcap scenario's blueprint should carry that sensor host. Stateful replay straight at the resurrected host with `tcpliveplay` is a secondary path: the captured IPs won't match the deployed host, and replaying to a live target is finicky. Build the sensor path first.
+
+**Drive the rewrite from the range config.** A Digital Corpora capture carries the original scenario's IPs and MACs, while Ludus hands each user an isolated 10.x range on their own bridge. So `revenant_pcap_replay` reads the deployed `range-config.yml` and builds the `tcprewrite` map from it, rather than hardcoding addresses per scenario. Keep that coupling between the range config and the rewrite map explicit, since it's the part most likely to rot if left implicit.
 
 ## Scope & use
 
