@@ -1,6 +1,6 @@
 # Revenant
 
-  Resurrect dead-box DFIR and range images into live Proxmox VMs, packaged as a Ludus source you can apply and deploy.
+> Resurrect dead-box DFIR and range images into live Proxmox VMs, packaged as a Ludus source you can apply and deploy.
 
 ## Status
 
@@ -8,7 +8,7 @@ scoping.
 
 ## Overview
 
-Revenant takes a powered-off forensic image (range capture, CTF, incident acquisition) and boots it back to life as a Proxmox VM, wrapped as a Ludus source so it deploys the same way as anything else in your range. It pulls the users and creds out of the image on the way, so you can log in and work the box instead of just reading it from outside.
+Revenant takes a forensic scenario, starting with Digital Corpora: a disk image, often with a memory dump and packet captures alongside. It boots the disk back to life as a Proxmox VM, wrapped as a Ludus source so it deploys like anything else in your range. It recovers the users and creds on the way in, and when the scenario ships pcaps it replays them into the range. You get a live host and its original network traffic, instead of a dead file to read.
 
 Dead-box forensics is the analysis of a system that's powered off and inert. Revenant reverses that. A revenant comes back from the dead; so does your image.
 
@@ -16,13 +16,24 @@ Dead-box forensics is the analysis of a system that's powered off and inert. Rev
 
 Ludus builds ranges as code on Proxmox, but its templates are baked from clean ISOs with Packer. DFIR images are the opposite: a system that already existed, with real users and a real story. Revenant imports the existing image instead, registers it as a Proxmox template, and ships a blueprint that drops it into a range. Ludus is an overlay on Proxmox, so the result is a first-class Proxmox object either way.
 
+## Scenarios
+
+Revenant starts from [Digital Corpora](https://digitalcorpora.org) scenarios: forensic datasets that are freely available for research and education, no prior authorization needed. Disks ship as EnCase E01, alongside memory dumps and PCAP where the scenario has them. Assets live in a public S3 bucket and pull with the AWS CLI:
+
+```
+aws s3 ls s3://digitalcorpora/corpora/scenarios/
+aws s3 cp --recursive s3://digitalcorpora/corpora/scenarios/<scenario> ./<scenario>
+```
+
+The three-part bundle maps onto the pipeline: the disk gets resurrected, the memory feeds Volatility, and the pcap gets replayed.
+
 ## Repository layout
 
 Revenant is packaged as a Ludus **source**: a catalog of blueprints, Packer templates, and Ansible roles and collections that `ludus source add` installs. Layout follows the Ludus source template.
 
 ```
 revenant/                         Ludus source root
-├── blueprints/                   one dir per resurrection scenario
+├── blueprints/                   one dir per scenario
 │   └── <scenario>/
 │       ├── blueprint.yml         name, description, what it deploys
 │       ├── range-config.yml      Ludus range referencing the resurrected template
@@ -33,22 +44,22 @@ revenant/                         Ludus source root
 │       └── README.md
 ├── templates/                    Packer templates shared across blueprints
 ├── ansible/
-│   ├── roles/                    revenant_credential_reset, revenant_first_boot, etc.
+│   ├── roles/                    revenant_credential_reset, revenant_first_boot, revenant_pcap_replay
 │   └── collections/              vendored collections
 ├── LICENSE
 └── README.md
 ```
 
-Revenant has two halves. The CLI does the ingest, extract, and resurrect work against an image. The source ships the Ludus artifacts that wrap the result. The wrinkle: a Ludus `templates/` entry is normally a Packer build, but a resurrected host is imported, so Revenant registers it as a Proxmox template with `qm template` and the range-config references it by name. The `templates/` dirs are for companion VMs a scenario needs (an analyst box, a collector), not the resurrected host itself.
+Revenant has two halves. The CLI does the ingest, extract, resurrect, and replay work against a scenario. The source ships the Ludus artifacts that wrap the result. The wrinkle: a Ludus `templates/` entry is normally a Packer build, but a resurrected host is imported, so Revenant registers it as a Proxmox template with `qm template` and the range-config references it by name. Scenario assets (disk, memory, pcap) are pulled from Digital Corpora at ingest, not vendored into the repo.
 
 ## How it works
 
-**1. Ingest.** Read the image and convert to a Proxmox-friendly disk (qcow2 or raw, matching `proxmox_vm_storage_format`). Formats: E01/EWF, raw dd, VMDK, VHD/VHDX, qcow2. Memory captures handled separately.
+**1. Ingest.** Pull a scenario from Digital Corpora and convert its disk to a Proxmox-friendly image (qcow2 or raw, matching `proxmox_vm_storage_format`). Disk formats: E01/EWF, raw dd, VMDK, VHD/VHDX, qcow2. Memory and pcap are carried through for the later stages.
 
 **2. Extract.** Produce a users-and-creds report, plus the facts Resurrect needs to boot the box right:
 
 - Users and hashes from the on-disk registry hives (SAM/SYSTEM).
-- Creds and sessions from memory via Volatility, when a memory image exists.
+- Creds and sessions from memory via Volatility, when the scenario has a memory dump.
 - OS, hostname, and firmware type via Plaso (log2timeline to process, pinfo to report). The OS maps to the Proxmox `ostype`; the firmware type decides SeaBIOS vs OVMF.
 
 **3. Resurrect.** Land the disk on the node and register it as a template, following the [qm](https://pve.proxmox.com/pve-docs/chapter-qm.html) chapter:
@@ -69,9 +80,16 @@ qm template <vmid>
 - Windows imaged off other hardware may not boot on virtio-scsi without drivers. Attach on SATA or IDE for first boot, or inject virtio drivers, then switch.
 - Domain controllers get a fresh `--vmgenid 1` so the guest treats it as a clean restore.
 
+**4. Replay.** When the scenario ships pcaps, rewrite the capture to the deployed range and replay it onto the VLAN, so sensors and the resurrected host see the original traffic:
+
+- `tcpprep` builds the client/server cache, `tcprewrite` remaps MACs and addresses to the range topology.
+- `tcpreplay` pushes the packets onto the range bridge, preserving timing or at top speed.
+- `tcpliveplay` does stateful replay against a live host when you want it to actually respond.
+
 Then the Ludus half:
 
 - Reset or inject the recovered creds so the accounts actually log in (`revenant_credential_reset`).
+- Stage and replay the scenario pcaps (`revenant_pcap_replay`).
 - Emit the blueprint: `blueprint.yml` plus a `range-config.yml` referencing the template, so `ludus blueprint apply revenant/<scenario>` then `ludus range deploy` stands it up.
 
 Networking, VLANs, and access stay with Ludus.
@@ -81,10 +99,12 @@ Networking, VLANs, and access stay with Ludus.
 - [Plaso](https://github.com/log2timeline/plaso) (log2timeline + pinfo) for OS and system details
 - [Volatility](https://github.com/volatilityfoundation/volatility3) for memory analysis
 - Registry/hive parsing for on-disk users and creds
+- [tcpreplay](https://tcpreplay.appneta.com/) (tcprewrite, tcpreplay, tcpliveplay) for pcap replay
 - [Proxmox VE](https://pve.proxmox.com/pve-docs/chapter-qm.html) (`qm`, `qemu-img`) for import and templating
 - Packer + Ansible for Ludus templates and provisioning
 - [Ludus](https://docs.ludus.cloud/) for source packaging, blueprints, and deployment
+- [Digital Corpora](https://digitalcorpora.org) for source scenarios, pulled with the AWS CLI
 
 ## Scope & use
 
-For authorized forensics, training, and range work on images you own or may analyze. Not for booting or cracking images you have no authorization for.
+Digital Corpora scenarios are freely available for research and education. Beyond those, Revenant is for authorized forensics, training, and range work on images you own or may analyze. Not for booting or cracking images you have no authorization for.
