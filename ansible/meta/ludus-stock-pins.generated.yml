@@ -1,0 +1,25 @@
+---
+# GENERATED FILE -- do not hand-edit.
+# Regenerate: scripts/sync-ludus-stock-pins.py sync --ref <ludus-tag>
+ludus_stock_pins_meta:
+  generated_by: scripts/sync-ludus-stock-pins.py
+  do_not_hand_edit: true
+  ludus_ref: 2.3.1
+  upstream: https://gitlab.com/badsectorlabs/ludus/-/raw/2.3.1/ludus-server/ansible/requirements.yml
+  note: Pins ship inside the ludus-server binary and change per release. Re-run sync
+    with --ref matching the server version you actually run (`ludus version`). This
+    repo's own releases are bound to this ludus_ref -- see the policy header in this
+    script.
+ludus_stock_collections:
+  ansible.windows: 2.7.0
+  ansible.posix: 1.6.2
+  ansible.utils: 5.1.2
+  community.general: 10.3.0
+  community.windows: 2.3.0
+  chocolatey.chocolatey: 1.5.3
+  microsoft.ad: 1.8.0
+  vladgh.samba: 3.4.0
+ludus_stock_roles:
+  lae.proxmox: v1.10.0
+  geerlingguy.packer: 1.0.2
+  ansible-thoteam.nexus3-oss: v2.5.2

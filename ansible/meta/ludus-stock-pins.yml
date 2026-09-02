@@ -1,0 +1,77 @@
+---
+# ludus-stock-pins.yml — policy for this repo's relationship to stock Ludus's
+# own Galaxy pins. The version DATA lives elsewhere; see below.
+#
+# Home: ansible/meta/ludus-stock-pins.yml
+
+# ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
+# Ludus installs its own required collections/roles per-user into
+# users/<user>/.ansible/ from the requirements file baked into the server
+# binary. A source that declares the SAME collection at a DIFFERENT version
+# silently overwrites the stock pin at `ludus source add` time.
+#
+# That alone is survivable. What makes it a trap is removal: `ludus ansible
+# collection rm <fqcn>` deletes the collection DIRECTORY outright. There is no
+# version awareness and no refcount, so removing "our" copy takes Ludus's copy
+# with it — stock deploys then fail on missing collections until they are
+# reinstalled (see `scripts/sync-ludus-stock-pins.py restore`).
+
+# ── THE POLICY ───────────────────────────────────────────────────────────────
+# There must be NO drift between what this repo pins and what stock Ludus pins —
+# with exactly ONE sanctioned exception:
+#
+#   A BLUEPRINT's own requirements.yml may declare a different version. That is
+#   how a scenario brings a newer collection than stock ships, and it is the
+#   only place this repo is allowed to do it.
+#
+# Nothing else may differ. A vendored collection, a template's build-time
+# requirements, or any top-level Galaxy declaration must match the stock version
+# exactly or not declare the name at all.
+#
+# `scripts/sync-ludus-stock-pins.py check` enforces this by walking every
+# requirements.yml-shaped file in the repo and classifying each hit as BLUEPRINT
+# (allowed to differ) or NOT (any difference is a hard CI failure). There is no
+# manual allowlist — a new file outside a blueprint is caught by construction.
+
+# ── DEPENDENCY POLICY ────────────────────────────────────────────────────────
+# THE STOCK PIN IS THE CEILING, and it applies ONLY to collections Ludus itself
+# ships. Within the ceiling, take the highest release that still allows a full
+# deployment. A collection Ludus does NOT ship has no ceiling.
+#
+# Why a ceiling at all: `ludus source add` installs a blueprint's requirements
+# OVER the shared per-user Galaxy tree. A blueprint pinning above stock does not
+# sit ALONGSIDE stock — it REPLACES it for every consumer on the box. Pinning
+# above stock has broken stock deploys elsewhere in this org's sources while
+# every gate stayed green; hold the ceiling.
+#
+# VERSIONS ARE EXACT, not ranges. ansible-galaxy resolves a range on the HOST at
+# install time, so two hosts on the same commit can land on different versions
+# and Galaxy will not lift an already-satisfying install without `-U`. Exact
+# pins make the host deterministic. `scripts/check-module-availability.py`
+# resolves the set, asserts it is at or under the stock ceiling, proves every
+# module the plays call still exists at that version, and syntax-checks the
+# playbooks. A pinned version must also actually be published on Galaxy — an
+# unpublished pin makes `ludus source add` abort and install nothing.
+
+# ── WHERE THE PIN DATA LIVES ─────────────────────────────────────────────────
+# The stock version maps are NOT in this file. They are generated from upstream:
+#
+#   scripts/sync-ludus-stock-pins.py sync --ref <ludus-tag>
+#
+# into:
+#   ansible/meta/ludus-stock-pins.generated.yml   the pins for the ONE Ludus
+#                                                 version this repo targets now
+#   ansible/meta/ludus-stock-pins/<version>.yml   one file per captured release
+#                                                 (the pins ship inside the
+#                                                 ludus-server binary and change
+#                                                 per release)
+#
+# Upstream is gitlab.com/badsectorlabs/ludus,
+# ludus-server/ansible/requirements.yml. Tags are UNPREFIXED (2.3.1, not v2.3.1).
+# Re-sync when a new Ludus tag appears and record the new ref here in review.
+
+# Overrides currently in effect: NONE. Revenant ships no blueprints yet, so
+# nothing declares a Ludus-shipped collection at all. `check` does not read this
+# list for pass/fail — a blueprint override is unconditionally permitted; this
+# is documentation, not a gate.
+overrides_in_effect: []

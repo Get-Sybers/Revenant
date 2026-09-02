@@ -1,0 +1,55 @@
+# --- editor / OS cruft ---
+.DS_Store
+
+# --- Python (the CLI half) ---
+__pycache__/
+*.pyc
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- forensic scenario assets: PULLED at ingest, NEVER committed ---
+# Disk images, memory dumps and captures come from Digital Corpora at ingest
+# time (see README.md) and are large and/or sensitive. This repo is public —
+# keep them out of git. A blueprint references the resurrected template by name;
+# the bytes are re-pulled/re-imported, not vendored.
+#
+# Disk images
+*.E01
+*.e01
+*.Ex01
+*.aff
+*.aff4
+*.dd
+*.raw
+*.img
+*.001
+*.qcow2
+*.vmdk
+*.vhd
+*.vhdx
+*.vdi
+*.ova
+*.ovf
+# Memory dumps
+*.mem
+*.dmp
+*.lime
+*.core
+*.vmem
+# Packet captures
+*.pcap
+*.pcapng
+*.cap
+# A genuinely-needed SMALL fixture can still be committed explicitly with
+# `git add -f path/to/fixture`.
