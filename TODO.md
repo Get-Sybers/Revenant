@@ -6,8 +6,8 @@ roughly in dependency order within each group.
 
 ## Done — foundation
 
-- Repository scaffold (`blueprints/`, `templates/`, `ansible/roles|collections/`,
-  `docs/`) with documented placeholder READMEs.
+- Repository scaffold (`blueprints/`, `templates/`, `ansible/roles/`,
+  `ansible/collections/`, `docs/`) with documented placeholder READMEs.
 - `source.yml`, `LICENSE` (AGPL-3.0), `.gitignore` (blocks forensic scenario assets).
 - QA gates: `check-upstream.py` (provenance) + `sync-ludus-stock-pins.py` (drift,
   synced to Ludus 2.3.1) active, with `run-gates.sh` + CI (`.github/workflows/gates.yml`).
