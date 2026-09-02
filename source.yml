@@ -1,0 +1,28 @@
+---
+# source.yml — repo-level metadata read by `ludus source add`.
+#
+# Reference: https://docs.ludus.cloud/docs/using-ludus/sources
+#
+# Only `manifest_version` is required; the other fields are optional and default
+# to values derived from the git remote. `authors`, `homepage`, and `license`
+# apply to everything shipped from this source.
+
+manifest_version: 1
+
+name: "Get-Sybers Revenant"
+description: >-
+  Resurrect dead-box DFIR and range images into live Proxmox VMs, packaged as a
+  Ludus source you can apply and deploy. Revenant takes a forensic scenario —
+  starting with Digital Corpora: a disk image, often with a memory dump and
+  packet captures alongside — boots the disk back to life as an imported Proxmox
+  template, recovers the users and creds on the way in, and when the scenario
+  ships pcaps replays them into the range. Ships the scenario blueprints and the
+  Revenant task-roles (first-boot fixups, credential reset, pcap replay); the
+  resurrected templates are imported with `qm`, not built from ISO with Packer.
+authors:
+  - "Get-Sybers <99623331+Get-Sybers@users.noreply.github.com>"
+homepage: https://github.com/Get-Sybers/Revenant
+# Applies to the source as a whole and is inherited by its blueprints. Bundled
+# third-party roles and collections retain their own upstream licences (recorded
+# in each item's meta/upstream.yml). See LICENSE.
+license: AGPL-3.0-only
