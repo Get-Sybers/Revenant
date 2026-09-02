@@ -1,0 +1,36 @@
+name: gates
+
+# Revenant runs its QA gates in CI. The Get-Sybers range/campaign siblings run
+# the same check-*.py family by hand; committing a workflow that runs them on
+# every PR is a deliberate improvement for this public repo — a red gate blocks
+# the merge instead of relying on someone remembering to run it.
+#
+# What runs is scripts/run-gates.sh, scoped by scripts/gates.yml.
+
+on:
+  pull_request:
+    branches: [integration, main]
+  push:
+    branches: [integration, main]
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install gate dependencies
+        # pyyaml is all the active gates need. When the module_availability gate
+        # activates (first blueprint requirements.yml), add `ansible` here — it
+        # shells out to ansible-galaxy / ansible-playbook.
+        run: pip install pyyaml
+
+      - name: Run QA gates
+        run: bash scripts/run-gates.sh

@@ -1,0 +1,52 @@
+---
+# scripts/gates.yml — THIS repo's scope for the mirrored QA checkers.
+#
+# The scripts/*.py checkers are shared across the Get-Sybers Ludus sources;
+# this file is the per-repo config. A gate that reads this file and finds
+# `applicable: false` prints NOT-APPLICABLE and exits 0; a gate that runs and
+# measures nothing FAILS ("a gate that matches nothing is not a gate").
+#
+# ── Revenant's gate inventory ────────────────────────────────────────────────
+# Revenant differs from the range/campaign siblings: its templates are IMPORTED
+# disk images (`qm template`), not Packer-from-ISO builds, and its own layer is
+# a Python CLI plus a few DFIR roles. The suite is scoped to that.
+#
+# ACTIVE (shipped, run on every change; do not read this file):
+#   check-upstream.py            provenance of vendored roles/collections and
+#                                imported third-party content — Revenant's core
+#                                integrity need. Namespace-agnostic.
+#   sync-ludus-stock-pins.py check   drift between anything this repo pins and
+#                                stock Ludus's own collection pins. Pin data +
+#                                policy live in ansible/meta/.
+#
+# INACTIVE for now (shipped, gated off here until there is content to check):
+#   module_availability          activates when the first blueprint
+#                                requirements.yml lands (see below).
+#
+# DEFERRED (not shipped yet — land with the first roles/collections/blueprints,
+# and need namespace/path adaptation off their FGNW defaults first):
+#   check-closure.py             FQCN resolution + declared cross-collection
+#                                deps. Hardwired to the `get_sybers` namespace
+#                                and a fixed blueprint path; adapt when Revenant
+#                                ships a collection.
+#   check-range-infra-boundary.py   range-vs-infra boundary. Point `boundary.
+#                                scan_trees` at real dirs when roles exist.
+#   check-one-action.py          rule-8 one-action-per-task. Set scope_root /
+#                                scope_globs to the owned Ansible tree.
+#   check-density.py             informational conditional-density report;
+#                                get_sybers.*-flavored, add adapted with roles.
+#
+# DROPPED (do not apply to Revenant's model):
+#   check-iso-compliance.py      validates the Packer-build-from-ISO template
+#                                model Revenant REPLACES; there are no .pkr.hcl
+#                                files here. A disk-image provenance analogue is
+#                                planned once the ingest format is settled.
+#   check-patches.py             cluster-tier stock-Ludus file patching; N/A.
+#   check-role-packs.py          validates Claude session role packs; N/A.
+
+module_availability:
+  applicable: false
+  reason: >-
+    no blueprint requirements.yml exists yet — there is nothing to resolve
+    against the stock-pin ceiling. Flip to applicable:true (drop this block)
+    when the first scenario blueprint lands.
