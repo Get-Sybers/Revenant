@@ -4,7 +4,12 @@
 
 ## Status
 
-scoping.
+**Under development.** The Ludus-source **foundation** is in place — repository
+scaffold, QA gates (provenance + stock-pin drift) with CI, engineering standards,
+and the branch/PR workflow. The resurrection **CLI**, the **DFIR roles**, and the
+scenario **blueprints** described below are **not built yet**, so nothing here
+deploys a scenario end-to-end today — the sections that follow describe the
+*intended design*. Remaining work is tracked in [`TODO.md`](TODO.md).
 
 ## Overview
 

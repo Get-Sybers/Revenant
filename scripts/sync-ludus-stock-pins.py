@@ -46,7 +46,7 @@ UPSTREAM
 
 USAGE
     # regenerate the pin data for the Ludus version you run
-    ./scripts/sync-ludus-stock-pins.py sync --ref 2.3.0
+    ./scripts/sync-ludus-stock-pins.py sync --ref 2.3.1
 
     # ...or from a Ludus host, without network access
     ./scripts/sync-ludus-stock-pins.py sync --from-file /opt/ludus/ansible/requirements.yml
@@ -98,7 +98,7 @@ GENERATED = REPO_ROOT / "ansible/meta/ludus-stock-pins.generated.yml"
 #   * the ceiling can be resolved against the version actually running, and
 #   * rolling the server back does not silently leave the repo asserting the
 #     ceiling of a version that is no longer installed.
-# Populated by `sync --ref <tag>` (one release) or `sync --all-releases`.
+# Populated by `sync --ref <tag>` (one release) or `sync-all-releases`.
 PINS_DIR = REPO_ROOT / "ansible/meta/ludus-stock-pins"
 
 
@@ -245,9 +245,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
         except OSError as exc:
             sys.exit(f"cannot read {args.from_file}: {exc}")
         provenance = {"source": str(args.from_file), "ref": None}
-    else:
+    elif args.ref:
         text = _fetch(args.ref)
         provenance = {"source": RAW_URL.format(ref=args.ref), "ref": args.ref}
+    else:
+        sys.exit("sync: nothing pinned yet and no --ref given -- pass "
+                 "--ref <tag> (or --from-file <path>).")
 
     cols, roles = _parse_strict(text)
     payload = {
@@ -610,9 +613,21 @@ def main() -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    # Default --ref to the ref this repo is currently pinned to (from the
+    # generated file), so a bare `sync` re-syncs the CURRENT target rather than a
+    # hardcoded, quickly-stale older release. None (nothing pinned yet) means
+    # --ref or --from-file must be given; cmd_sync enforces that.
+    _synced_ref = None
+    if GENERATED.exists():
+        try:
+            _synced_ref = ((yaml.safe_load(GENERATED.read_text()) or {})
+                           .get("ludus_stock_pins_meta") or {}).get("ludus_ref")
+        except yaml.YAMLError:
+            _synced_ref = None
     s = sub.add_parser("sync", help="regenerate the stock pin data")
-    s.add_argument("--ref", default="2.3.0",
-                   help="Ludus git tag, UNPREFIXED (default: 2.3.0)")
+    s.add_argument("--ref", default=_synced_ref,
+                   help="Ludus git tag, UNPREFIXED (default: the ref this repo "
+                        "is pinned to; e.g. 2.3.1)")
     s.add_argument("--from-file",
                    help="read a local requirements.yml instead of fetching "
                         "(e.g. /opt/ludus/ansible/requirements.yml)")

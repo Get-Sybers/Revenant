@@ -20,9 +20,9 @@ WHY THIS EXISTS
           campaign/ansible/FGNW-exchange.yml:135
 
     So the blueprint pinned a version that breaks its own playbook, and every
-    existing gate passed. This script closes that gap: it is the
-    "prevents newer versions becoming spare of the build" half of the
-    dependency policy.
+    existing gate passed. This script closes that gap: it is the half of the
+    dependency policy that proves a pinned version still ships the modules the
+    plays actually call.
 
 WHAT IT CHECKS
     For every `namespace.collection.module:` task key in the repo, resolve the
@@ -290,74 +290,6 @@ def collect_short_refs(names: set) -> dict:
                     (str(path.relative_to(REPO_ROOT)), i)
                 )
     return refs
-
-
-def _installed_roots() -> list[Path]:
-    roots = []
-    users = Path("/opt/ludus/users")
-    if users.is_dir():
-        for u in sorted(users.iterdir()):
-            p = u / ".ansible/collections/ansible_collections"
-            if p.is_dir():
-                roots.append(p)
-    for extra in ("/root/.ansible/collections/ansible_collections",):
-        p = Path(extra)
-        if p.is_dir():
-            roots.append(p)
-    return roots
-
-
-def _version_of(coll_dir: Path) -> str | None:
-    manifest = coll_dir / "MANIFEST.json"
-    if manifest.is_file():
-        import json
-
-        try:
-            return json.loads(manifest.read_text())["collection_info"]["version"]
-        except Exception:
-            return None
-    galaxy = coll_dir / "galaxy.yml"
-    if galaxy.is_file():
-        try:
-            return str((yaml.safe_load(galaxy.read_text()) or {}).get("version"))
-        except yaml.YAMLError:
-            return None
-    return None
-
-
-def locate(coll: str, version: str, allow_install: bool, cache: dict) -> Path | None:
-    """Directory of `coll` at exactly `version`, or None if it can't be obtained."""
-    key = (coll, version)
-    if key in cache:
-        return cache[key]
-    ns, name = coll.split(".", 1)
-
-    for root in _installed_roots():
-        cand = root / ns / name
-        if cand.is_dir() and _version_of(cand) == version:
-            cache[key] = cand
-            return cand
-
-    if allow_install:
-        tmp = Path(tempfile.mkdtemp(prefix="modavail-"))
-        proc = subprocess.run(
-            ["ansible-galaxy", "collection", "install", f"{coll}:{version}",
-             "-p", str(tmp)],
-            capture_output=True, text=True,
-            # Set both spellings: ANSIBLE_COLLECTIONS_PATH (singular, preferred
-            # in ansible-core 2.10+) and ANSIBLE_COLLECTIONS_PATHS (plural,
-            # deprecated alias) — robust across interpreter versions.
-            env={**os.environ, "ANSIBLE_COLLECTIONS_PATH": str(tmp),
-                 "ANSIBLE_COLLECTIONS_PATHS": str(tmp)},
-        )
-        cand = tmp / "ansible_collections" / ns / name
-        if proc.returncode == 0 and cand.is_dir():
-            cache[key] = cand
-            return cand
-        shutil.rmtree(tmp, ignore_errors=True)
-
-    cache[key] = None
-    return None
 
 
 def _routing(coll_dir: Path) -> dict:
