@@ -62,6 +62,9 @@ def check_role(role_dir, fetch):
         return
     with open(meta) as fh:
         d = yaml.safe_load(fh)
+    if not isinstance(d, dict):
+        fail.append(f"{name}: meta/upstream.yml is empty or not a mapping")
+        return
 
     for k in REQUIRED_TOP:
         if k not in d:
@@ -93,6 +96,12 @@ def check_role(role_dir, fetch):
             fail.append(
                 f"{name}: derived_from is empty — every role states what it came "
                 f"from (use `derived_from: original` if it is original work)")
+        elif not (isinstance(sources, list)
+                  and all(isinstance(s, dict) for s in sources)):
+            fail.append(
+                f"{name}: derived_from must be `original` or a list of source "
+                f"mappings")
+            sources = []
 
     n_vendored = 0
     for src in sources:
@@ -246,9 +255,12 @@ def main():
         n = check_role(rd, args.fetch) or 0
         total += n
         if os.path.exists(meta):
-            d = yaml.safe_load(open(meta))
-            print(f"  {r:<38}{d.get('status',''):<10}"
-                  f"{len(d.get('derived_from') or []):<9}{n}")
+            with open(meta) as fh:
+                d = yaml.safe_load(fh)
+            d = d if isinstance(d, dict) else {}
+            dv = d.get("derived_from")
+            nsrc = len(dv) if isinstance(dv, list) else 0
+            print(f"  {r:<38}{d.get('status',''):<10}{nsrc:<9}{n}")
         else:
             print(f"  {r:<38}{'MISSING':<10}{'-':<9}-")
 

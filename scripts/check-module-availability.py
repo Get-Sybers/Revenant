@@ -344,7 +344,11 @@ def locate(coll: str, version: str, allow_install: bool, cache: dict) -> Path | 
             ["ansible-galaxy", "collection", "install", f"{coll}:{version}",
              "-p", str(tmp)],
             capture_output=True, text=True,
-            env={**os.environ, "ANSIBLE_COLLECTIONS_PATH": str(tmp)},
+            # Set both spellings: ANSIBLE_COLLECTIONS_PATH (singular, preferred
+            # in ansible-core 2.10+) and ANSIBLE_COLLECTIONS_PATHS (plural,
+            # deprecated alias) — robust across interpreter versions.
+            env={**os.environ, "ANSIBLE_COLLECTIONS_PATH": str(tmp),
+                 "ANSIBLE_COLLECTIONS_PATHS": str(tmp)},
         )
         cand = tmp / "ansible_collections" / ns / name
         if proc.returncode == 0 and cand.is_dir():
@@ -455,6 +459,8 @@ def parse_sweep(root: Path) -> list:
                 pass
 
     env = {**os.environ, "ANSIBLE_COLLECTIONS_PATH": str(root.parent),
+           # both spellings — see the install-time env above
+           "ANSIBLE_COLLECTIONS_PATHS": str(root.parent),
            # Vendored roles live in the repo (ansible/roles/<name>) and are
            # installed by `ludus source add`, never by ansible-galaxy — so they
            # must be on the path explicitly or every play using one fails the
