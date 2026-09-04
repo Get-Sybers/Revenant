@@ -5,6 +5,7 @@ import io
 import os
 import platform
 import subprocess
+import tarfile
 import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -17,6 +18,7 @@ from revenant.extract.vmkatz import (
     SNAPSHOT_EXTENSIONS,
     VMkatz,
     _asset_name,
+    _extract_binary,
     _parse_csv,
     _sha256_file,
     _validate_disk_path,
@@ -98,6 +100,25 @@ class TestSha256File:
         p.write_bytes(data)
         expected = hashlib.sha256(data).hexdigest()
         assert _sha256_file(p) == expected
+
+
+class TestExtractBinary:
+    def test_extracts_vmkatz_from_tar_without_unpacking_other_members(self, tmp_path):
+        archive = tmp_path / "vmkatz.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            nested = tmp_path / "nested_vmkatz"
+            nested.write_bytes(b"vmkatz-bytes")
+            tf.add(nested, arcname="nested/path/vmkatz")
+
+            other = tmp_path / "other_file"
+            other.write_bytes(b"ignored")
+            tf.add(other, arcname="../../evil")
+
+        dest = tmp_path / "bin"
+        installed = _extract_binary(archive, dest)
+        assert installed == dest / "vmkatz"
+        assert installed.read_bytes() == b"vmkatz-bytes"
+        assert not (tmp_path / "evil").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +295,7 @@ class TestVMkatzEnsureBinary:
         fake_bin.write_bytes(b"fake-binary-content")
         import hashlib
         digest = hashlib.sha256(b"fake-binary-content").hexdigest()
+        (tmp_path / "vmkatz.sha256").write_text(f"{digest}\n", encoding="utf-8")
 
         vmk = VMkatz(bin_dir=tmp_path)
 
@@ -603,6 +625,13 @@ class TestCli:
         rc = main([])
         assert rc == 0
 
+    def test_extract_without_mode_prints_extract_help(self, capsys):
+        from revenant.cli import main
+        rc = main(["extract"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Extract Windows credentials" in out
+
     def test_extract_disk_json(self, tmp_path, capsys):
         fake_bin = tmp_path / "vmkatz"
         fake_bin.touch()
@@ -630,7 +659,11 @@ class TestCli:
         csv_out = _make_csv([
             {"type": "sam", "domain": "LAB", "username": "admin",
              "nt_hash": "31d6cfe0d16ae931b73c59d7e0c089c0",
-             "lm_hash": "", "sha1": "", "plaintext": ""}
+             "lm_hash": "", "sha1": "", "plaintext": ""},
+            {"type": "wdigest", "domain": "LAB", "username": "admin",
+             "nt_hash": "", "lm_hash": "", "sha1": "", "plaintext": "Password123!"},
+            {"type": "sam", "domain": "LAB", "username": "",
+             "nt_hash": "aa" * 16, "lm_hash": "", "sha1": "", "plaintext": ""},
         ])
         from revenant.cli import main
         with patch("subprocess.run") as mock_run:
@@ -646,6 +679,7 @@ class TestCli:
         out = capsys.readouterr().out
         assert "admin" in out
         assert "31d6cfe0d16ae931b73c59d7e0c089c0" in out
+        assert out.count("\n") == 1
 
     def test_extract_snapshot_with_disk(self, tmp_path, capsys):
         fake_bin = tmp_path / "vmkatz"
@@ -711,4 +745,3 @@ class TestCli:
         assert rc == 1
         err = capsys.readouterr().err
         assert "revenant:" in err
-

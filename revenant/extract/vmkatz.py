@@ -180,8 +180,13 @@ def _extract_binary(archive_path: Path, dest_dir: Path) -> Path:
                 raise RuntimeError(
                     f"Could not find 'vmkatz' binary inside {archive_name}."
                 )
-            bin_member.name = "vmkatz"
-            tf.extract(bin_member, path=dest_dir)
+            extracted = tf.extractfile(bin_member)
+            if extracted is None:
+                raise RuntimeError(
+                    f"Could not extract 'vmkatz' binary from {archive_name}."
+                )
+            out = dest_dir / "vmkatz"
+            out.write_bytes(extracted.read())
     elif archive_name.endswith(".zip"):
         with zipfile.ZipFile(archive_path) as zf:
             names = zf.namelist()
@@ -320,6 +325,9 @@ class VMkatz:
     def _installed_path(self) -> Path:
         return self._bin_dir / self._bin_name()
 
+    def _installed_digest_path(self) -> Path:
+        return self._bin_dir / f"{self._bin_name()}.sha256"
+
     def binary_path(self) -> Path:
         """Return the path to the vmkatz binary.
 
@@ -351,12 +359,15 @@ class VMkatz:
             return self._binary
 
         installed = self._installed_path()
+        installed_digest_path = self._installed_digest_path()
         asset = _asset_name()
         expected_sha = _fetch_expected_sha256(asset)
 
-        # Already installed and digest still matches — nothing to do.
-        if installed.exists() and _sha256_file(installed) == expected_sha:
-            return installed
+        # Already installed and locally verified before — nothing to do.
+        if installed.exists() and installed_digest_path.exists():
+            recorded_sha = installed_digest_path.read_text(encoding="utf-8").strip().lower()
+            if recorded_sha and _sha256_file(installed) == recorded_sha:
+                return installed
 
         # Download the archive into a temp directory, verify, then install.
         url = f"{VMKATZ_RELEASE_BASE}/{asset}"
@@ -373,6 +384,8 @@ class VMkatz:
                 )
 
             installed = _extract_binary(tmp_archive, self._bin_dir)
+            installed_digest = _sha256_file(installed)
+            installed_digest_path.write_text(f"{installed_digest}\n", encoding="utf-8")
 
         return installed
 
@@ -409,7 +422,7 @@ class VMkatz:
 
         Raises:
             ValueError: If *disk* has an unrecognised extension.
-            FileNotFoundError: If the disk path or vmkatz binary does not exist.
+            FileNotFoundError: If the vmkatz binary does not exist.
             subprocess.CalledProcessError: If vmkatz exits non-zero.
             subprocess.TimeoutExpired: If extraction exceeds *timeout* seconds.
         """

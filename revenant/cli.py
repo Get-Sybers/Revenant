@@ -158,10 +158,12 @@ def _get_vmk(args: argparse.Namespace) -> VMkatz | None:
 def _print_creds(creds, output_format: str) -> None:
     if output_format == "pwdump":
         for c in creds:
+            if not c.username or not c.nt_hash:
+                continue
             domain = c.domain or ""
-            user = c.username or ""
+            user = c.username
             lm = c.lm_hash or "aad3b435b51404eeaad3b435b51404ee"
-            nt = c.nt_hash or "31d6cfe0d16ae931b73c59d7e0c089c0"
+            nt = c.nt_hash
             print(f"{domain}\\{user}:0:{lm}:{nt}:::")
     else:
         print(json.dumps([c.as_dict() for c in creds], indent=2))
@@ -218,8 +220,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "extract":
         if not hasattr(args, "extract_mode") or args.extract_mode is None:
-            # Print extract sub-command help
-            parser.parse_args(["extract", "--help"])
+            # Print extract sub-command help.
+            try:
+                parser.parse_args(["extract", "--help"])
+            except SystemExit:
+                pass
             return 0
         if args.extract_mode == "disk":
             return _cmd_extract_disk(args)
@@ -232,4 +237,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
-
