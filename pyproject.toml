@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "revenant"
+version = "0.1.0"
+description = "Resurrect forensic disk images into live Proxmox VMs"
+readme = "README.md"
+license = { text = "AGPL-3.0-only" }
+requires-python = ">=3.11"
+# No third-party runtime dependencies: stdlib only.
+dependencies = []
+
+[project.scripts]
+revenant = "revenant.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Get-Sybers/Revenant"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["revenant*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

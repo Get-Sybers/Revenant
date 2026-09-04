@@ -21,10 +21,17 @@ or `cli/`), its entry points, and its test layout.
 - [ ] **Ingest** — convert a source disk (E01/EWF, raw dd, VMDK, VHD/VHDX, OVA/OVF,
       qcow2) to a Proxmox-friendly image matching `proxmox_vm_storage_format`; carry
       the memory dump and pcap through to the later stages.
-- [ ] **Extract** — users/hashes from on-disk SAM/SYSTEM hives; creds/sessions from
-      memory via Volatility3; OS + hostname + firmware via Plaso (log2timeline →
-      pinfo), mapping OS → `ostype` and firmware → SeaBIOS/OVMF. Emit a
-      users-and-creds report.
+- [x] **Extract (passwords)** — `revenant extract` sub-command uses
+      [VMkatz](https://github.com/nikaiw/VMkatz) (v1.4.1, pinned + SHA-256
+      verified) to pull NT/LM hashes, Kerberos tickets, WDigest plaintext,
+      cached domain creds, LSA secrets, DPAPI master keys, and NTDS.dit hashes
+      directly from VM memory snapshots (`.vmsn`, `.vmem`, `.sav`, QEMU savevm)
+      and virtual disks (`.vmdk`, `.qcow2`, `.vhd`, `.vhdx`, `.vdi`).  Output
+      in JSON (default) or pwdump format.  Implemented in
+      `revenant/extract/vmkatz.py`; entry point wired in `pyproject.toml`.
+- [ ] **Extract (OS metadata)** — OS + hostname + firmware via Plaso
+      (log2timeline → pinfo), mapping OS → `ostype` and firmware →
+      SeaBIOS/OVMF. Emit a complete users-and-creds + host-metadata report.
 - [ ] **Resurrect** — `qm create` / `qm importovf` + `qm template`; handle ostype,
       firmware (UEFI EFI disk; Win11 `q35` + TPM), virtio-vs-SATA first boot / driver
       injection, and a fresh `--vmgenid` for DC clean-restore.
