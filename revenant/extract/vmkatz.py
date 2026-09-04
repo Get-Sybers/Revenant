@@ -3,22 +3,51 @@
 VMkatz (https://github.com/nikaiw/VMkatz) is a static binary that extracts
 Windows credentials — NTLM hashes, Kerberos tickets, cached domain creds,
 LSA secrets, DPAPI master keys, NTDS.dit, BitLocker keys — directly from VM
-memory snapshots and virtual disks without pulling the full image.
+virtual disks and memory snapshots, without pulling the full image.
+
+Primary use-case for Revenant: extract credentials from a VMDK (or other
+virtual disk format) that was imported alongside a forensic scenario.  When a
+memory snapshot is also available — a ``.vmsn``/``.vmss`` VMware snapshot, a
+``.vmem`` raw memory file, a QEMU savevm state, or similar — pass it together
+with the disk so VMkatz can resolve paged-out credentials and extract
+live-session material (Kerberos tickets, WDigest plaintext, DPAPI keys) in
+addition to the on-disk SAM/LSA/DCC2 hashes.
+
+Extraction tiers
+----------------
+1. **Disk only** (``extract_from_disk``) — SAM hashes, LSA secrets, cached
+   domain credentials (DCC2), DPAPI master-key hashes, NTDS.dit (DC disks).
+   Supported formats: ``.vmdk``, ``.qcow2``, ``.vhd``/``.vhdx``, ``.vdi``.
+
+2. **Disk + snapshot** (``extract_from_snapshot``) — everything in tier 1, plus
+   live LSASS material: NT/LM hashes, WDigest plaintext, Kerberos tickets,
+   DPAPI session keys, LSA secrets held in memory.  Supply the snapshot as the
+   first positional argument; pass the companion disk via ``disk=``.
 
 This module:
   1. Downloads the pinned VMkatz release for the current platform on first use.
   2. Verifies the SHA-256 digest against the upstream SHA256SUMS release asset.
-  3. Invokes the binary and returns credentials as a list of plain dicts.
+  3. Invokes the binary and returns credentials as typed :class:`Credential`
+     dataclass instances.
 
-Typical usage inside the Revenant CLI::
+Quick start::
 
     from revenant.extract.vmkatz import VMkatz
 
     vmk = VMkatz()
-    vmk.ensure_binary()          # idempotent: no-op if binary is current
-    creds = vmk.extract("snapshot.vmsn")
-    # creds → [{"type": "msv", "domain": "CORP", "user": "alice",
-    #           "nt_hash": "...", ...}, ...]
+    vmk.ensure_binary()   # idempotent — no-op when binary is current
+
+    # Tier 1: disk only
+    creds = vmk.extract_from_disk("disk.vmdk")
+
+    # Tier 2: disk + VMware snapshot
+    creds = vmk.extract_from_snapshot("snapshot.vmsn", disk="disk.vmdk")
+
+    # Tier 2: disk + raw memory file
+    creds = vmk.extract_from_snapshot("snapshot.vmem", disk="disk.vmdk")
+
+    # Domain-controller disk — full NTDS.dit extraction
+    creds = vmk.extract_from_disk("dc-disk.vmdk", ntds=True)
 """
 
 import csv
@@ -26,7 +55,6 @@ import hashlib
 import io
 import os
 import platform
-import shutil
 import stat
 import subprocess
 import tarfile
@@ -46,6 +74,16 @@ VMKATZ_RELEASE_BASE = (
     f"https://github.com/nikaiw/VMkatz/releases/download/v{VMKATZ_VERSION}"
 )
 VMKATZ_SHA256SUMS_URL = f"{VMKATZ_RELEASE_BASE}/SHA256SUMS.txt"
+
+# Supported virtual-disk extensions (checked before handing a path to VMkatz).
+DISK_EXTENSIONS: frozenset[str] = frozenset(
+    {".vmdk", ".qcow2", ".vhd", ".vhdx", ".vdi"}
+)
+
+# Supported memory-snapshot extensions.
+SNAPSHOT_EXTENSIONS: frozenset[str] = frozenset(
+    {".vmsn", ".vmss", ".vmem", ".sav", ".vmrs", ".elf"}
+)
 
 # Default install location — respects XDG_DATA_HOME if set.
 _XDG_DATA_HOME = Path(
@@ -80,11 +118,9 @@ def _asset_name() -> str:
         )
 
     if system == "linux":
-        ext = "tar.gz"
-        return f"vmkatz-v{VMKATZ_VERSION}-linux-{arch}.{ext}"
+        return f"vmkatz-v{VMKATZ_VERSION}-linux-{arch}.tar.gz"
     if system == "darwin":
-        ext = "tar.gz"
-        return f"vmkatz-v{VMKATZ_VERSION}-macos-{arch}.{ext}"
+        return f"vmkatz-v{VMKATZ_VERSION}-macos-{arch}.tar.gz"
     if system == "windows":
         return f"vmkatz-v{VMKATZ_VERSION}-windows-{arch}.zip"
 
@@ -237,11 +273,25 @@ def _parse_csv(csv_text: str) -> list[Credential]:
 class VMkatz:
     """Manages the VMkatz binary and runs credential-extraction jobs.
 
+    The primary extraction methods are:
+
+    * :meth:`extract_from_disk` — SAM hashes, LSA secrets, cached domain
+      credentials, DPAPI master-key hashes, and (optionally) NTDS.dit from a
+      virtual disk (``.vmdk``, ``.qcow2``, ``.vhd``/``.vhdx``, ``.vdi``).
+
+    * :meth:`extract_from_snapshot` — everything above **plus** live LSASS
+      material (NT/LM, WDigest, Kerberos tickets, DPAPI session keys) extracted
+      from a memory snapshot.  Accepts any snapshot format VMkatz supports
+      (``.vmsn``, ``.vmss``, ``.vmem``, QEMU savevm, ``.vmrs``, ``.elf``).
+      Pass the companion disk via ``disk=`` for paged-out credential resolution
+      and to unlock on-disk secrets alongside memory extraction.
+
     Args:
         bin_dir: Directory where the vmkatz binary is stored.  Defaults to
             ``~/.local/share/revenant/bin`` (XDG_DATA_HOME honoured).
         binary_path: Explicit path to an already-installed vmkatz binary.
             When set, *bin_dir* is ignored and no download is attempted.
+            The ``VMKATZ_BIN`` environment variable has the same effect.
     """
 
     def __init__(
@@ -271,7 +321,10 @@ class VMkatz:
         return self._bin_dir / self._bin_name()
 
     def binary_path(self) -> Path:
-        """Return the path to the vmkatz binary (download if necessary)."""
+        """Return the path to the vmkatz binary.
+
+        Does *not* download the binary — call :meth:`ensure_binary` for that.
+        """
         if self._binary is not None:
             if not self._binary.exists():
                 raise FileNotFoundError(
@@ -324,7 +377,130 @@ class VMkatz:
         return installed
 
     # ------------------------------------------------------------------
-    # Extraction
+    # Tier 1: disk extraction
+    # ------------------------------------------------------------------
+
+    def extract_from_disk(
+        self,
+        disk: str | Path,
+        *,
+        ntds: bool = False,
+        timeout: int = 300,
+    ) -> list[Credential]:
+        """Extract credentials from a virtual disk image.
+
+        Runs ``vmkatz <disk>`` (plus ``--ntds`` when requested) and returns
+        on-disk credentials: SAM NT/LM hashes, LSA secrets, cached domain
+        credentials (DCC2), and DPAPI master-key hashes.  When *ntds* is set
+        and the disk belongs to a domain controller, the full NTDS.dit hash
+        table is extracted instead.
+
+        Supported disk formats:
+            ``.vmdk`` (VMware, sparse or flat), ``.qcow2`` (QEMU/Proxmox),
+            ``.vhd`` / ``.vhdx`` (Hyper-V), ``.vdi`` (VirtualBox).
+
+        Args:
+            disk: Path to the virtual disk.
+            ntds: Enable NTDS.dit extraction (domain-controller disk required).
+            timeout: Maximum seconds to wait for VMkatz.
+
+        Returns:
+            List of :class:`Credential` objects.
+
+        Raises:
+            ValueError: If *disk* has an unrecognised extension.
+            FileNotFoundError: If the disk path or vmkatz binary does not exist.
+            subprocess.CalledProcessError: If vmkatz exits non-zero.
+            subprocess.TimeoutExpired: If extraction exceeds *timeout* seconds.
+        """
+        disk = Path(disk)
+        _validate_disk_path(disk)
+
+        cmd = [str(self.binary_path()), "--format", "csv"]
+        if ntds:
+            cmd.append("--ntds")
+        cmd.append(str(disk))
+
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=True,
+        )
+        return _parse_csv(result.stdout)
+
+    # ------------------------------------------------------------------
+    # Tier 2: snapshot (+ optional disk) extraction
+    # ------------------------------------------------------------------
+
+    def extract_from_snapshot(
+        self,
+        snapshot: str | Path,
+        *,
+        disk: Optional[str | Path] = None,
+        ntds: bool = False,
+        timeout: int = 300,
+    ) -> list[Credential]:
+        """Extract credentials from a VM memory snapshot, optionally with a disk.
+
+        Passes the snapshot to VMkatz for live LSASS extraction (NT/LM hashes,
+        WDigest plaintext, Kerberos tickets, DPAPI session keys, LSA secrets
+        held in memory).  When *disk* is also supplied it is passed as
+        ``--disk``; VMkatz uses it to resolve paged-out credentials from the
+        snapshot **and** to run the full on-disk extraction (SAM, LSA, DCC2,
+        DPAPI, NTDS.dit) in the same pass.
+
+        Supported snapshot formats:
+            ``.vmsn`` / ``.vmss`` (VMware Workstation / ESXi),
+            ``.vmem`` (raw VMware memory file),
+            ``.sav`` (VirtualBox saved state),
+            QEMU/KVM savevm state (auto-detected),
+            ``.vmrs`` (Hyper-V saved state),
+            ``.elf`` (``virsh dump`` ELF core).
+
+        Args:
+            snapshot: Path to the VM memory snapshot.
+            disk: Optional companion virtual disk for paged-out resolution and
+                on-disk extraction.  Supported formats same as
+                :meth:`extract_from_disk`.
+            ntds: Enable NTDS.dit extraction (requires a DC disk via *disk=*).
+            timeout: Maximum seconds to wait for VMkatz.
+
+        Returns:
+            List of :class:`Credential` objects.
+
+        Raises:
+            ValueError: If *snapshot* has an unrecognised extension, or if
+                *disk* is supplied with an unrecognised extension.
+            FileNotFoundError: If a supplied path or the vmkatz binary does not
+                exist.
+            subprocess.CalledProcessError: If vmkatz exits non-zero.
+            subprocess.TimeoutExpired: If extraction exceeds *timeout* seconds.
+        """
+        snapshot = Path(snapshot)
+        _validate_snapshot_path(snapshot)
+
+        cmd = [str(self.binary_path()), "--format", "csv"]
+        if disk is not None:
+            disk = Path(disk)
+            _validate_disk_path(disk)
+            cmd += ["--disk", str(disk)]
+        if ntds:
+            cmd.append("--ntds")
+        cmd.append(str(snapshot))
+
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=True,
+        )
+        return _parse_csv(result.stdout)
+
+    # ------------------------------------------------------------------
+    # Low-level passthrough (for callers that need full control)
     # ------------------------------------------------------------------
 
     def extract(
@@ -334,32 +510,23 @@ class VMkatz:
         ntds: bool = False,
         timeout: int = 300,
     ) -> list[Credential]:
-        """Run VMkatz against one or more VM artefacts and return credentials.
+        """Low-level passthrough: run VMkatz against arbitrary target paths.
+
+        Prefer :meth:`extract_from_disk` or :meth:`extract_from_snapshot` for
+        the standard Revenant workflows.  Use this method only when you need to
+        pass targets that do not fit those signatures (e.g. raw registry hives,
+        LSASS minidumps, or a VM directory).
 
         Args:
-            *targets: One or more paths to VM artefacts — memory snapshots
-                (``.vmsn``, ``.vmem``, ``.sav``, QEMU savevm), virtual disks
-                (``.vmdk``, ``.qcow2``, ``.vhd``, ``.vhdx``, ``.vdi``), raw
-                registry hives (``SAM``, ``SYSTEM``, ``SECURITY``), LSASS
-                minidumps (``.dmp``), or a VM directory.
-            disk: Optional companion virtual-disk path; passed as
-                ``--disk`` to resolve paged-out credentials from memory.
-            ntds: Pass ``--ntds`` to enable NTDS.dit extraction from a domain
-                controller disk (requires a DC disk as one of *targets*).
-            timeout: Maximum seconds to wait for vmkatz to finish.
+            *targets: One or more paths passed verbatim to VMkatz.
+            disk: Optional ``--disk`` argument for paged-out resolution.
+            ntds: Pass ``--ntds`` to VMkatz.
+            timeout: Maximum seconds to wait for VMkatz.
 
         Returns:
-            List of :class:`Credential` objects, one per extracted entry.
-
-        Raises:
-            FileNotFoundError: If the vmkatz binary is absent.
-            subprocess.CalledProcessError: If vmkatz exits with a non-zero
-                status.
-            subprocess.TimeoutExpired: If extraction exceeds *timeout* seconds.
+            List of :class:`Credential` objects.
         """
-        binary = self.binary_path()
-
-        cmd: list[str] = [str(binary), "--format", "csv"]
+        cmd: list[str] = [str(self.binary_path()), "--format", "csv"]
         if disk is not None:
             cmd += ["--disk", str(disk)]
         if ntds:
@@ -373,7 +540,6 @@ class VMkatz:
             timeout=timeout,
             check=True,
         )
-
         return _parse_csv(result.stdout)
 
     def extract_to_dicts(
@@ -383,7 +549,7 @@ class VMkatz:
         ntds: bool = False,
         timeout: int = 300,
     ) -> list[dict]:
-        """Convenience wrapper that returns plain dicts instead of dataclasses."""
+        """Convenience wrapper around :meth:`extract` that returns plain dicts."""
         return [
             c.as_dict()
             for c in self.extract(
@@ -393,3 +559,29 @@ class VMkatz:
                 timeout=timeout,
             )
         ]
+
+
+# ---------------------------------------------------------------------------
+# Path validation helpers
+# ---------------------------------------------------------------------------
+
+def _validate_disk_path(path: Path) -> None:
+    """Raise :exc:`ValueError` if *path* is not a recognised virtual-disk format."""
+    ext = path.suffix.lower()
+    if ext not in DISK_EXTENSIONS:
+        raise ValueError(
+            f"'{path.name}' does not look like a virtual disk "
+            f"(expected one of {sorted(DISK_EXTENSIONS)}, got '{ext}'). "
+            "Use VMkatz.extract() to pass arbitrary targets."
+        )
+
+
+def _validate_snapshot_path(path: Path) -> None:
+    """Raise :exc:`ValueError` if *path* is not a recognised snapshot format."""
+    ext = path.suffix.lower()
+    if ext not in SNAPSHOT_EXTENSIONS:
+        raise ValueError(
+            f"'{path.name}' does not look like a VM memory snapshot "
+            f"(expected one of {sorted(SNAPSHOT_EXTENSIONS)}, got '{ext}'). "
+            "Use VMkatz.extract() to pass arbitrary targets."
+        )
